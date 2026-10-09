@@ -1,6 +1,8 @@
 #pragma once
 
+#include <QHash>
 #include <QMainWindow>
+#include <QSet>
 #include <QVector>
 #include <optional>
 
@@ -15,6 +17,7 @@ class NoteListModel;
 class QAction;
 class QActionGroup;
 class QCheckBox;
+class QCloseEvent;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -35,6 +38,7 @@ public:
 
 protected:
     void changeEvent(QEvent *event) override;
+    void closeEvent(QCloseEvent *event) override;
 
 private slots:
     void onReady(bool ok, const QString &error);
@@ -65,7 +69,9 @@ private:
     void updateActionStates();
     void applySort(int column, Qt::SortOrder order);
     void selectNoteById(int noteId);
-    void runEditor(const NoteDialog::Init &init);
+    void openEditor(const NoteDialog::Init &init);
+    void unregisterEditor(NoteDialog *dialog);
+    QList<NoteDialog *> openEditors() const;
     std::optional<Note> currentNote() const;
 
     NoteController &m_controller;
@@ -92,6 +98,11 @@ private:
     QActionGroup *m_languageGroup = nullptr;
     QMenu *m_fileMenu = nullptr;
     QMenu *m_languageMenu = nullptr;
+
+    /// Editors for existing notes (noteId > 0). Reopening activates the entry.
+    QHash<int, NoteDialog *> m_editorsByNoteId;
+    /// Editors for brand-new notes (id == 0), keyed by draft session.
+    QHash<QString, NoteDialog *> m_editorsByDraftKey;
 
     int m_pendingSelectId = 0;
     bool m_recovering = false;

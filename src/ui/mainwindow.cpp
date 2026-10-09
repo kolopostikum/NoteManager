@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDir>
 #include <QEvent>
@@ -18,6 +19,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 #include <QRegExp>
+#include <QSet>
 #include <QSortFilterProxyModel>
 #include <QSplitter>
 #include <QStatusBar>
@@ -239,6 +241,20 @@ void MainWindow::changeEvent(QEvent *event)
     QMainWindow::changeEvent(event);
 }
 
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    // Ask each open editor about unsaved work. Any "Keep editing" aborts quit.
+    const QList<NoteDialog *> editors = openEditors();
+    for (NoteDialog *dialog : editors) {
+        if (!dialog->tryClose()) {
+            event->ignore();
+            return;
+        }
+        dialog->close();
+    }
+    event->accept();
+}
+
 void MainWindow::retranslate()
 {
     setWindowTitle(tr("NoteManager"));
@@ -369,9 +385,17 @@ void MainWindow::onNoteSaved(quint64, const Note &note)
     reload();
 }
 
-void MainWindow::onNoteDeleted(quint64, int)
+void MainWindow::onNoteDeleted(quint64, int noteId)
 {
-    statusBar()->showMessage(tr("Note deleted"), 4000);
+    if (NoteDialog *dialog = m_editorsByNoteId.take(noteId)) {
+        // Keep the text: the editor becomes a "new note" that can be saved again.
+        m_editorsByDraftKey.insert(dialog->draftKey(), dialog);
+        dialog->detachAsNewNote();
+        statusBar()->showMessage(
+            tr("Note deleted; the open editor keeps the text as a new note"), 6000);
+    } else {
+        statusBar()->showMessage(tr("Note deleted"), 4000);
+    }
     reload();
 }
 
@@ -454,7 +478,7 @@ void MainWindow::addNote()
 {
     NoteDialog::Init init;
     init.draftKey = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    runEditor(init);
+    openEditor(init);
 }
 
 void MainWindow::editSelected()
@@ -466,28 +490,70 @@ void MainWindow::editSelected()
     init.note = *note;
     init.baseUpdatedAt = note->updatedAt;
     init.draftKey = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    runEditor(init);
+    openEditor(init);
 }
 
-void MainWindow::runEditor(const NoteDialog::Init &init)
+QList<NoteDialog *> MainWindow::openEditors() const
 {
-    NoteDialog dialog(init, this);
-    const QString key = init.draftKey;
+    QSet<NoteDialog *> unique;
+    for (NoteDialog *d : m_editorsByNoteId)
+        unique.insert(d);
+    for (NoteDialog *d : m_editorsByDraftKey)
+        unique.insert(d);
+    return unique.values();
+}
 
-    connect(&dialog, &NoteDialog::draftAutosave, &m_controller, &NoteController::saveDraft);
-    connect(&m_controller, &NoteController::draftSaved, &dialog,
-            [&dialog, key](const QString &savedKey, const QDateTime &when) {
-                if (savedKey == key)
-                    dialog.showDraftSaved(when);
-            });
+void MainWindow::unregisterEditor(NoteDialog *dialog)
+{
+    if (!dialog)
+        return;
+    if (const int id = dialog->noteId(); id > 0)
+        m_editorsByNoteId.remove(id);
+    m_editorsByDraftKey.remove(dialog->draftKey());
+}
 
-    if (dialog.exec() == QDialog::Accepted) {
-        // Persist the draft first so the text survives even if saving fails.
-        m_controller.saveDraft(dialog.draft());
-        m_controller.saveNote(dialog.note(), key);
-    } else {
-        m_controller.deleteDraft(key);
+void MainWindow::openEditor(const NoteDialog::Init &init)
+{
+    if (init.note.id > 0) {
+        if (NoteDialog *existing = m_editorsByNoteId.value(init.note.id)) {
+            existing->raise();
+            existing->activateWindow();
+            return;
+        }
     }
+
+    // Independent top-level window: no parent, so the WM does not glue it to us.
+    auto *dialog = new NoteDialog(init, nullptr);
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+
+    if (init.note.id > 0)
+        m_editorsByNoteId.insert(init.note.id, dialog);
+    else
+        m_editorsByDraftKey.insert(init.draftKey, dialog);
+
+    connect(dialog, &NoteDialog::draftAutosave, &m_controller, &NoteController::saveDraft);
+    connect(&m_controller, &NoteController::draftSaved, dialog,
+            [dialog](const QString &savedKey, const QDateTime &when) {
+                if (savedKey == dialog->draftKey())
+                    dialog->showDraftSaved(when);
+            });
+    connect(dialog, &NoteDialog::saveRequested, this,
+            [this, dialog](const Note &note, const QString &draftKey) {
+                unregisterEditor(dialog);
+                // Persist the draft first so the text survives even if saving fails.
+                m_controller.saveDraft(dialog->draft());
+                m_controller.saveNote(note, draftKey);
+            });
+    connect(dialog, &NoteDialog::discardRequested, this,
+            [this, dialog](const QString &draftKey) {
+                unregisterEditor(dialog);
+                m_controller.deleteDraft(draftKey);
+            });
+    connect(dialog, &QObject::destroyed, this, [this, dialog]() { unregisterEditor(dialog); });
+
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 void MainWindow::deleteSelected()
@@ -594,7 +660,7 @@ void MainWindow::onDraftsLoaded(const QVector<DraftInfo> &drafts)
                     init.note.updatedAt = info.current->updatedAt;
                 }
             }
-            runEditor(init);
+            openEditor(init);
         }
     }
     m_recovering = false;

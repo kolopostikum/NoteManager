@@ -1,8 +1,11 @@
 #include "ui/notedialog.h"
 
+#include <QCloseEvent>
 #include <QDialogButtonBox>
 #include <QEvent>
 #include <QFormLayout>
+#include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLocale>
@@ -34,7 +37,9 @@ NoteDialog::NoteDialog(const Init &init, QWidget *parent)
       m_baseUpdatedAt(init.baseUpdatedAt),
       m_restored(init.restored)
 {
-    setModal(true);
+    // Independent top-level window (not glued to MainWindow via WM_TRANSIENT_FOR).
+    setWindowFlags(Qt::Window);
+    setModal(false);
     resize(560, 520);
 
     m_titleEdit = new QLineEdit(m_original.title, this);
@@ -163,6 +168,18 @@ void NoteDialog::showDraftSaved(const QDateTime &when)
         tr("Draft saved at %1").arg(QLocale().toString(when.toLocalTime().time(), QLocale::ShortFormat)));
 }
 
+void NoteDialog::detachAsNewNote()
+{
+    m_original.id = 0;
+    m_original.createdAt = QDateTime();
+    m_original.updatedAt = QDateTime();
+    m_baseUpdatedAt = QDateTime();
+    m_restored = true;
+    m_createdEdit->setText(formatDate(QDateTime()));
+    m_updatedEdit->setText(formatDate(QDateTime()));
+    retranslate();
+}
+
 void NoteDialog::onEdited()
 {
     m_dirtySinceAutosave = true;
@@ -171,8 +188,6 @@ void NoteDialog::onEdited()
 
 void NoteDialog::updateValidation()
 {
-    // Only complain about the title once the user has typed something or
-    // the form is not pristine; an empty form for a new note is not an error yet.
     QString message;
     switch (NoteValidator::validateTitle(m_titleEdit->text())) {
     case NoteValidator::Error::None:
@@ -200,7 +215,7 @@ void NoteDialog::onAutosaveTimer()
     emit draftAutosave(draft());
 }
 
-void NoteDialog::accept()
+bool NoteDialog::emitSaveIfValid()
 {
     const NoteValidator::Error error = NoteValidator::validateTitle(m_titleEdit->text());
     if (error != NoteValidator::Error::None) {
@@ -209,14 +224,40 @@ void NoteDialog::accept()
                                   : tr("Title must not exceed %1 characters.")
                                         .arg(NoteValidator::kMaxTitleLength));
         m_titleEdit->setFocus();
-        return;
+        return false;
     }
     m_autosaveTimer->stop();
-    QDialog::accept();
+    m_closing = true;
+    emit saveRequested(note(), m_draftKey);
+    return true;
+}
+
+void NoteDialog::emitDiscardAndClose()
+{
+    m_autosaveTimer->stop();
+    m_closing = true;
+    emit discardRequested(m_draftKey);
+}
+
+void NoteDialog::accept()
+{
+    if (!emitSaveIfValid())
+        return;
+    done(QDialog::Accepted);
 }
 
 void NoteDialog::reject()
 {
+    if (!tryClose())
+        return;
+    done(QDialog::Rejected);
+}
+
+bool NoteDialog::tryClose()
+{
+    if (m_closing)
+        return true;
+
     if (isModified()) {
         QMessageBox box(QMessageBox::Question, tr("Unsaved changes"),
                         tr("The note has unsaved changes."), QMessageBox::NoButton, this);
@@ -225,13 +266,25 @@ void NoteDialog::reject()
         box.addButton(tr("Keep editing"), QMessageBox::RejectRole);
         box.exec();
 
-        if (box.clickedButton() == saveButton) {
-            accept();
-            return;
-        }
+        if (box.clickedButton() == saveButton)
+            return emitSaveIfValid();
         if (box.clickedButton() != discardButton)
-            return; // keep editing
+            return false;
     }
-    m_autosaveTimer->stop();
-    QDialog::reject();
+
+    emitDiscardAndClose();
+    return true;
+}
+
+void NoteDialog::closeEvent(QCloseEvent *event)
+{
+    if (m_closing) {
+        event->accept();
+        return;
+    }
+    if (!tryClose()) {
+        event->ignore();
+        return;
+    }
+    event->accept();
 }
