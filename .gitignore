@@ -1,0 +1,11 @@
+build*/
+cmake-build-*/
+*.user
+*.autosave
+CMakeLists.txt.user*
+.cache/
+compile_commands.json
+*.qm
+*.db
+*.db-wal
+*.db-shm
