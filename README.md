@@ -101,9 +101,10 @@ find ~/.local/share/NoteManager -name 'notes.db*'
 | SQLite | 3.46.1 |
 | ОС | Ubuntu 26.04 |
 
-Не проверялось: valgrind и `sqlite3` CLI в окружении разработки установить не удалось (нет прав на
-`apt`), поэтому проверка памяти выполнена AddressSanitizer/LeakSanitizer, а БД проверялась через
-`python3 -m sqlite3` (тот же движок). Команды выше рассчитаны на обычную систему с этими пакетами.
+Проверка выполнена так: AddressSanitizer/UBSan/LeakSanitizer на всех 8 наборах тестов и на скриншот-утилите;
+`valgrind --leak-check=full` на `tst_repository`, `tst_controller`, `tst_services` (0 ошибок, 0 потерянных
+блоков); схема БД проверена через `sqlite3 .schema`. В окружении разработки не было прав на `apt`, поэтому
+`valgrind` и `sqlite3` были распакованы из `.deb` в домашний каталог без установки.
 
 ## Архитектура
 
