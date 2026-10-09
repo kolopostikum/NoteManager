@@ -1,0 +1,5 @@
+# Known, one-time allocations inside third-party libraries used by the Qt
+# offscreen platform plugin. None originate from NoteManager code.
+leak:libfontconfig.so
+leak:libexpat.so
+leak:libqoffscreen.so
