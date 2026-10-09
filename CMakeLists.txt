@@ -88,19 +88,31 @@ add_custom_target(update_translations
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-add_executable(NoteManager
-    src/main.cpp
+add_library(notemanager_ui STATIC
     src/ui/mainwindow.h
     src/ui/mainwindow.cpp
     src/ui/notedialog.h
     src/ui/notedialog.cpp
     src/ui/notelistmodel.h
     src/ui/notelistmodel.cpp
+)
+target_link_libraries(notemanager_ui PUBLIC notemanager_core Qt5::Widgets)
+
+add_executable(NoteManager
+    src/main.cpp
     resources/resources.qrc
     ${I18N_RESOURCES}
 )
 add_dependencies(NoteManager translations)
-target_link_libraries(NoteManager PRIVATE notemanager_core Qt5::Widgets Qt5::Svg)
+target_link_libraries(NoteManager PRIVATE notemanager_ui Qt5::Svg)
+
+# Optional developer tool that renders the window to a PNG (used for README screenshots).
+option(BUILD_TOOLS "Build developer tools" OFF)
+if(BUILD_TOOLS)
+    add_executable(NoteManagerScreenshot tools/screenshot.cpp ${I18N_RESOURCES} resources/resources.qrc)
+    add_dependencies(NoteManagerScreenshot translations)
+    target_link_libraries(NoteManagerScreenshot PRIVATE notemanager_ui Qt5::Svg)
+endif()
 
 # ---------------------------------------------------------------------------
 # Tests
